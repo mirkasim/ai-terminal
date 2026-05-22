@@ -64,6 +64,14 @@ ai-terminal [options] [English description...]
 Omit the description to enter the interactive REPL. In the REPL, type `exit` or
 `quit` (or press Ctrl-D) to leave; command history is saved between sessions.
 
+Prefix a line with `!` to bypass the model and run the rest directly in your
+shell — useful for commands you already know:
+
+```
+ai: ai-terminal> !git status
+```
+
+
 ### Options
 
 | Option          | Description                                                 |

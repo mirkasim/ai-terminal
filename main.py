@@ -8,6 +8,7 @@ Usage:
 import argparse
 import atexit
 import os
+import shlex
 import subprocess
 import sys
 
@@ -60,10 +61,63 @@ def _confirm(prompt: str) -> bool:
     return answer in ("y", "yes")
 
 
+def _maybe_builtin(command: str) -> bool:
+    """Handle 'cd' in this process so it persists. Returns True if handled.
+
+    A 'cd' run in a subshell can't change our working directory, so we apply it
+    here. Compound commands (containing &&, ||, ;, |) are left to the shell.
+    """
+    stripped = command.strip()
+    if stripped != "cd" and not stripped.startswith("cd "):
+        return False
+    if any(op in stripped for op in ("&&", "||", ";", "|")):
+        return False
+
+    try:
+        tokens = shlex.split(stripped)
+    except ValueError:
+        return False
+
+    args = tokens[1:]
+    target = args[0] if args else "~"
+    if target == "-":
+        target = os.environ.get("OLDPWD")
+        if not target:
+            print("cd: OLDPWD not set", file=sys.stderr)
+            return True
+        print(target)
+    target = os.path.expanduser(os.path.expandvars(target))
+
+    prev = os.getcwd()
+    try:
+        os.chdir(target)
+    except OSError as e:
+        print(f"cd: {target}: {e.strerror}", file=sys.stderr)
+        return True
+    os.environ["OLDPWD"] = prev
+    return True
+
+
+def _run_shell(command: str) -> None:
+    if _maybe_builtin(command):
+        return
+    try:
+        subprocess.run(command, shell=True)
+    except KeyboardInterrupt:
+        print()
+
+
 def handle(nl_text: str, args: argparse.Namespace) -> None:
     """Translate one request and (optionally) run the resulting command."""
     nl_text = nl_text.strip()
     if not nl_text:
+        return
+
+    # Lines starting with '!' bypass the model and run directly in the shell.
+    if nl_text.startswith("!"):
+        command = nl_text[1:].strip()
+        if command:
+            _run_shell(command)
         return
 
     try:
@@ -85,15 +139,15 @@ def handle(nl_text: str, args: argparse.Namespace) -> None:
         print("Skipped.")
         return
 
-    try:
-        subprocess.run(command, shell=True)
-    except KeyboardInterrupt:
-        print()
+    _run_shell(command)
 
 
 def repl(args: argparse.Namespace) -> None:
     _init_history()
-    print("ai-terminal — type an English command, or 'exit' to quit.")
+    print(
+        "ai-terminal — type an English command, prefix with '!' to run a shell "
+        "command directly, or 'exit' to quit."
+    )
     while True:
         try:
             nl_text = input(f"ai: {os.path.basename(os.getcwd())}> ").strip()
